@@ -6,18 +6,6 @@ This application lets users manage their tasks efficiently, with features like s
 
 ---
 
-## 📁 Project Structure
-
-```
-.
-├── gui.py            # Tkinter-based GUI for task management
-├── taskmanager.py    # CLI version with SQLite and version control
-├── taskmanager.db    # SQLite database (auto-generated)
-└── README.md         # Project documentation
-```
-
----
-
 ## 🎯 Features
 
 ### 🖥 GUI Interface (gui.py)
