@@ -3,7 +3,7 @@ from tkinter import messagebox, ttk
 from tkinter.simpledialog import askstring
 from tkinter.filedialog import asksaveasfilename
 from datetime import datetime
-from A1_09_4_q3 import initialize_task_manager, add_task, complete_task, delete_task, update_task
+from taskmanager import TaskManagerDB
 import csv
 
 class TaskManagerGUI:
@@ -13,9 +13,9 @@ class TaskManagerGUI:
         self.root.geometry("1000x700")
         self.root.configure(bg="#f0f4f7")
 
-        self.conn = initialize_task_manager()
+        self.db = TaskManagerDB()
 
-        self.priority_var = tk.StringVar()
+        self.priority_var = tk.StringVar(value="medium")
         self.sort_var = tk.StringVar(value="None")
         self.search_var = tk.StringVar()
 
@@ -39,10 +39,22 @@ class TaskManagerGUI:
 
         tk.Label(frame, text="Priority:", font=("Segoe UI", 10), bg="#e3f2fd").grid(row=0, column=4, padx=5)
         self.priority_dropdown = ttk.Combobox(frame, textvariable=self.priority_var, values=["low", "medium", "high"], state="readonly", width=10)
-        self.priority_dropdown.set("medium")
         self.priority_dropdown.grid(row=0, column=5, padx=5)
 
         tk.Button(frame, text="Add Task", command=self.add_task_gui, bg="#1976d2", fg="white", font=("Segoe UI", 10, "bold"), padx=10, pady=5).grid(row=0, column=6, padx=10)
+
+    def _setup_treeview(self, parent, columns, has_edit=False):
+        tree = ttk.Treeview(parent, columns=columns, show='headings', selectmode="extended")
+        for col in columns:
+            tree.heading(col, text=col)
+            width = 80 if has_edit and col == "Edit" else 120
+            tree.column(col, width=width)
+            
+        tree.tag_configure('completed', foreground="green", font="SegoeUI 10 overstrike")
+        tree.tag_configure('low', background="#e3f2fd")
+        tree.tag_configure('medium', background="#fff9c4")
+        tree.tag_configure('high', background="#ffcdd2")
+        return tree
 
     def create_tree_views(self):
         search_frame = tk.Frame(self.root, bg="#f0f4f7")
@@ -53,28 +65,13 @@ class TaskManagerGUI:
         tk.Button(search_frame, text="Search", command=self.load_tasks).pack(side=tk.LEFT)
         tk.Button(search_frame, text="Export CSV", command=self.export_csv).pack(side=tk.RIGHT)
 
-        self.task_tree = ttk.Treeview(self.root, columns=("ID", "Title", "Description", "Status", "Priority", "Updated", "Edit"), show='headings', selectmode="extended")
-        for col in self.task_tree["columns"][:-1]:
-            self.task_tree.heading(col, text=col)
-            self.task_tree.column(col, width=120)
-        self.task_tree.heading("Edit", text="Edit")
-        self.task_tree.column("Edit", width=80)
+        self.task_tree = self._setup_treeview(self.root, ("ID", "Title", "Description", "Status", "Priority", "Updated", "Edit"), has_edit=True)
         self.task_tree.pack(fill=tk.BOTH, expand=True, pady=(10, 0), padx=10)
+        self.task_tree.bind("<ButtonRelease-1>", self.handle_edit_click)
 
         tk.Label(self.root, text="Completed Tasks", bg="#f0f4f7", font=("Segoe UI", 10, "bold"), anchor="w").pack(fill=tk.X, padx=10, pady=(10, 0))
-        self.completed_tree = ttk.Treeview(self.root, columns=("ID", "Title", "Description", "Status", "Priority", "Updated"), show='headings', selectmode="extended")
-        for col in self.completed_tree["columns"]:
-            self.completed_tree.heading(col, text=col)
-            self.completed_tree.column(col, width=120)
+        self.completed_tree = self._setup_treeview(self.root, ("ID", "Title", "Description", "Status", "Priority", "Updated"))
         self.completed_tree.pack(fill=tk.BOTH, expand=True, padx=10, pady=(0, 10))
-
-        for tree in (self.task_tree, self.completed_tree):
-            tree.tag_configure('completed', foreground="green", font="SegoeUI 10 overstrike")
-            tree.tag_configure('low', background="#e3f2fd")
-            tree.tag_configure('medium', background="#fff9c4")
-            tree.tag_configure('high', background="#ffcdd2")
-
-        self.task_tree.bind("<ButtonRelease-1>", self.handle_edit_click)
 
     def create_buttons(self):
         frame = tk.Frame(self.root, bg="#f0f4f7")
@@ -100,15 +97,15 @@ class TaskManagerGUI:
         return selected_ids
 
     def add_task_gui(self):
-        title = self.title_entry.get()
-        desc = self.desc_entry.get()
+        title = self.title_entry.get().strip()
+        desc = self.desc_entry.get().strip()
         priority = self.priority_var.get()
 
         if not title:
             messagebox.showwarning("Input Error", "Task title is required.")
             return
 
-        add_task(self.conn, title, desc, priority=priority)
+        self.db.add_task(title, desc, priority=priority)
         self.title_entry.delete(0, tk.END)
         self.desc_entry.delete(0, tk.END)
         self.priority_dropdown.set("medium")
@@ -117,16 +114,15 @@ class TaskManagerGUI:
     def complete_task_gui(self):
         task_ids = self.get_selected_task_ids()
         for task_id in task_ids:
-            complete_task(self.conn, task_id)
+            self.db.complete_task(task_id)
         self.load_tasks()
 
     def delete_task_gui(self):
         task_ids = self.get_selected_task_ids()
-        if task_ids:
-            if messagebox.askyesno("Confirm Delete", "Delete selected task(s)?"):
-                for task_id in task_ids:
-                    delete_task(self.conn, task_id)
-                self.load_tasks()
+        if task_ids and messagebox.askyesno("Confirm Delete", "Delete selected task(s)?"):
+            for task_id in task_ids:
+                self.db.delete_task(task_id)
+            self.load_tasks()
 
     def handle_edit_click(self, event):
         region = self.task_tree.identify("region", event.x, event.y)
@@ -147,8 +143,8 @@ class TaskManagerGUI:
         new_status = askstring("Edit Task", "Status (pending/completed):", initialvalue=status)
 
         if new_title and new_priority:
-            update_task(
-                self.conn, task_id,
+            self.db.update_task(
+                task_id,
                 title=new_title,
                 description=new_desc,
                 status=new_status,
@@ -160,13 +156,15 @@ class TaskManagerGUI:
         path = asksaveasfilename(defaultextension=".csv", filetypes=[("CSV Files", "*.csv")])
         if not path:
             return
-        cursor = self.conn.cursor()
-        cursor.execute("SELECT id, title, description, status, priority, updated_at FROM tasks")
+            
+        tasks = self.db.list_tasks()
         with open(path, "w", newline="") as f:
             writer = csv.writer(f)
             writer.writerow(["ID", "Title", "Description", "Status", "Priority", "Updated At"])
-            for row in cursor.fetchall():
-                writer.writerow(row)
+            for task in tasks:
+                task_id, title, description, status, priority, _, updated_at = task
+                writer.writerow([task_id, title, description, status, priority, updated_at])
+                
         messagebox.showinfo("Export Complete", f"Tasks exported to {path}")
 
     def load_tasks(self):
@@ -174,34 +172,23 @@ class TaskManagerGUI:
             for item in tree.get_children():
                 tree.delete(item)
 
-        cursor = self.conn.cursor()
-        base_query = "SELECT id, title, description, status, priority, updated_at FROM tasks"
-        conditions = []
-        params = []
+        priority_filter = self.sort_var.get()
+        search_query = self.search_var.get().strip()
+        
+        tasks = self.db.list_tasks(
+            filter_priority=priority_filter if priority_filter != "None" else None,
+            search_query=search_query if search_query else None
+        )
 
-        if self.sort_var.get() in ["low", "medium", "high"]:
-            conditions.append("priority = ?")
-            params.append(self.sort_var.get())
-
-        search = self.search_var.get().strip().lower()
-        if search:
-            conditions.append("(LOWER(title) LIKE ? OR LOWER(description) LIKE ?)")
-            params.extend([f"%{search}%", f"%{search}%"])
-
-        if conditions:
-            base_query += " WHERE " + " AND ".join(conditions)
-
-        base_query += " ORDER BY id"
-
-        for task in cursor.execute(base_query, params):
-            task_id, title, desc, status, priority, updated_at = task
+        for task in tasks:
+            task_id, title, desc, status, priority, _, updated_at = task
             tags = [priority]
-            row = (task_id, title, desc, status, priority, updated_at, "Edit")
+            
             if status == 'completed':
                 tags.append('completed')
-                self.completed_tree.insert('', 'end', values=row[:-1], tags=tags)
+                self.completed_tree.insert('', 'end', values=(task_id, title, desc, status, priority, updated_at), tags=tags)
             else:
-                self.task_tree.insert('', 'end', values=row, tags=tags)
+                self.task_tree.insert('', 'end', values=(task_id, title, desc, status, priority, updated_at, "Edit"), tags=tags)
 
 if __name__ == "__main__":
     root = tk.Tk()
